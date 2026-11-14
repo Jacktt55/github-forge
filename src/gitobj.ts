@@ -49,6 +49,24 @@ export function buildTree(entries: readonly TreeEntry[]): Buffer {
 }
 
 export function parseTree(data: Buffer): TreeEntry[] {
+  const cached = treeParseCache.get(data);
+  if (cached !== undefined) return cached;
+  const entries = parseTreeUncached(data);
+  treeParseCache.set(data, entries);
+  return entries;
+}
+
+/**
+ * Memoized tree parsing. Stored object buffers are never mutated after creation
+ * (the store is append-only), and no caller mutates the returned entries, so the
+ * parsed form is stable for a buffer's lifetime. The WeakMap drops entries when
+ * their buffer is collected (e.g. a deleted repository). This removes the repeated
+ * re-parse of the same tree in reachable / flattenTree / planFetch / merge-base
+ * walks, which otherwise re-scan and re-allocate on every visit.
+ */
+const treeParseCache = new WeakMap<Buffer, TreeEntry[]>();
+
+function parseTreeUncached(data: Buffer): TreeEntry[] {
   const entries: TreeEntry[] = [];
   let offset = 0;
   while (offset < data.length) {
@@ -83,6 +101,17 @@ export function buildCommit(info: CommitInfo): Buffer {
 }
 
 export function parseCommit(data: Buffer): CommitInfo {
+  const cached = commitParseCache.get(data);
+  if (cached !== undefined) return cached;
+  const info = parseCommitUncached(data);
+  commitParseCache.set(data, info);
+  return info;
+}
+
+/** Memoized commit parsing; see parseTree. Callers only read `tree` and `parents`. */
+const commitParseCache = new WeakMap<Buffer, CommitInfo>();
+
+function parseCommitUncached(data: Buffer): CommitInfo {
   const text = data.toString('utf8');
   const split = text.indexOf('\n\n');
   const header = split < 0 ? text : text.slice(0, split);
@@ -116,6 +145,17 @@ export function buildTag(info: TagInfo): Buffer {
 }
 
 export function parseTag(data: Buffer): TagInfo {
+  const cached = tagParseCache.get(data);
+  if (cached !== undefined) return cached;
+  const info = parseTagUncached(data);
+  tagParseCache.set(data, info);
+  return info;
+}
+
+/** Memoized tag parsing; see parseTree. Callers only read `object`. */
+const tagParseCache = new WeakMap<Buffer, TagInfo>();
+
+function parseTagUncached(data: Buffer): TagInfo {
   const text = data.toString('utf8');
   const split = text.indexOf('\n\n');
   const header = split < 0 ? text : text.slice(0, split);
@@ -229,11 +269,32 @@ function readPackObjectHeader(buf: Buffer, offset: number): { type: number; size
 
 /**
  * Inflate the zlib stream starting at `offset` and return the data plus the exact number
- * of input bytes the stream consumed. inflateSync tolerates trailing bytes, so a binary
- * search finds the minimal complete slice.
+ * of input bytes the stream consumed.
+ *
+ * Fast path: inflate once, then re-compress the result. A zlib stream produced at the
+ * default compression level (what writePack and git use) re-compresses to exactly the
+ * same bytes, so the re-compressed length is the consumed length. The FLEVEL bits (the
+ * top two bits of the second header byte) are 2 for level 6; any other level skips the
+ * fast path. When the re-compressed bytes do not match the prefix (a different level,
+ * strategy, or zlib), fall through to the binary search, which is always correct.
+ * This avoids the binary search's repeated inflateSync calls — most of which throw
+ * (each throw builds an Error with a stack trace) — on every pack object.
  */
 function inflateAt(buf: Buffer, offset: number): { data: Buffer; consumed: number } {
   const rest = buf.subarray(offset);
+  const flevel = rest.length >= 2 ? (rest[1] >> 6) & 0x03 : 0;
+  if (flevel === 2) {
+    try {
+      // inflateSync tolerates trailing bytes: it returns the first stream's data.
+      const data = inflateSync(rest);
+      const recompressed = deflateSync(data);
+      if (recompressed.length <= rest.length && rest.subarray(0, recompressed.length).equals(recompressed)) {
+        return { data, consumed: recompressed.length };
+      }
+    } catch {
+      // Not a default-level stream (or corrupt): fall through to the binary search.
+    }
+  }
   let lo = 1;
   let hi = rest.length;
   let data: Buffer | null = null;

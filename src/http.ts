@@ -36,22 +36,30 @@ export function sendError(res: ServerResponse, status: number, message: string):
   sendJson(res, status, { message });
 }
 
+/** The parsed URL of a request, cached per request object: app.ts, the REST router, and the git router each ask for the path and/or the query, and parsing the same URL three times per request is pure overhead. A request object lives only for its own handling, so the WeakMap never retains anything. */
+const requestUrlCache = new WeakMap<IncomingMessage, URL>();
+
+function requestUrl(req: IncomingMessage): URL {
+  const cached = requestUrlCache.get(req);
+  if (cached !== undefined) return cached;
+  let url: URL;
+  try {
+    url = new URL(req.url ?? '/', 'http://entry');
+  } catch {
+    url = new URL('/', 'http://entry');
+  }
+  requestUrlCache.set(req, url);
+  return url;
+}
+
 /** The path of a request URL, or '/' when it does not parse (never a throw). */
 export function pathOf(req: IncomingMessage): string {
-  try {
-    return new URL(req.url ?? '/', 'http://entry').pathname;
-  } catch {
-    return '/';
-  }
+  return requestUrl(req).pathname;
 }
 
 /** Parsed query parameters of a request URL. */
 export function queryOf(req: IncomingMessage): URLSearchParams {
-  try {
-    return new URL(req.url ?? '/', 'http://entry').searchParams;
-  } catch {
-    return new URLSearchParams();
-  }
+  return requestUrl(req).searchParams;
 }
 
 /** Read the whole request body (up to 64 MiB); resolves to the raw bytes. */
@@ -90,9 +98,11 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** The bearer token this entry expects, from MAKEFUN_SHOP_TOKEN. */
+/** The bearer token this entry expects, from MAKEFUN_SHOP_TOKEN. Read once and cached: process.env access is a C++-backed getter, so reading it on every request is pure overhead. The token is fixed for the process's life. */
+let cachedToken: string | undefined;
 export function expectedToken(): string {
-  return process.env.MAKEFUN_SHOP_TOKEN ?? '';
+  if (cachedToken === undefined) cachedToken = process.env.MAKEFUN_SHOP_TOKEN ?? '';
+  return cachedToken;
 }
 
 /** True when the request carries exactly the trial's bearer token. */
@@ -103,8 +113,9 @@ export function hasValidAuth(req: IncomingMessage): boolean {
   return header === `Bearer ${token}`;
 }
 
-/** Decode a path segment the client percent-encoded (apiPath encodes each segment). */
+/** Decode a path segment the client percent-encoded (apiPath encodes each segment). Fast path: most segments carry no '%', so skip decodeURIComponent (and its try/catch) entirely. */
 export function decodeSegment(segment: string): string {
+  if (!segment.includes('%')) return segment;
   try {
     return decodeURIComponent(segment);
   } catch {

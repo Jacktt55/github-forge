@@ -319,10 +319,14 @@ export class Store {
       return seen;
     };
     const aAncestors = ancestorsOf(a);
+    // Index-pointer queue, not shift(): Array.shift() is O(n) per call, which
+    // makes this BFS quadratic on a long history. The index pointer keeps the
+    // same FIFO order (and therefore the same merge-base result) in O(n).
     const queue = [b];
     const seenB = new Set<string>();
-    while (queue.length > 0) {
-      const oid = queue.shift()!;
+    let qi = 0;
+    while (qi < queue.length) {
+      const oid = queue[qi++]!;
       if (seenB.has(oid)) continue;
       seenB.add(oid);
       if (aAncestors.has(oid)) return oid;

@@ -13,7 +13,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { VIEWER, publicUser, trialNowIso } from './scenario.ts';
 import { store, type Issue, type Pull, type Repo } from './store.ts';
-import { hasValidAuth, isRecord, parseJsonBody, readBody, sendError, sendJson } from './http.ts';
+import { hasValidAuth, isRecord, parseJsonBody, pathOf, readBody, sendError, sendJson } from './http.ts';
 import { diffTrees, mergeConflicts, pullMergeable } from './rest.ts';
 import { parseCommit } from './gitobj.ts';
 
@@ -1061,13 +1061,7 @@ function executeOperation(operation: OperationNode, fragments: Map<string, Fragm
 
 /** Route the request; returns true when it was a /api/graphql request. */
 export async function handleGraphql(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-  const path = (() => {
-    try {
-      return new URL(req.url ?? '/', 'http://entry').pathname;
-    } catch {
-      return '/';
-    }
-  })();
+  const path = pathOf(req);
   if (path !== '/api/graphql') return false;
   if ((req.method ?? 'GET') !== 'POST') {
     sendError(res, 405, 'Method Not Allowed');

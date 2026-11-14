@@ -19,7 +19,6 @@ import {
   DELIM_PKT,
   FLUSH_PKT,
   ZERO_OID,
-  objectId,
   parseCommit,
   parsePktLines,
   parseTag,
@@ -30,7 +29,7 @@ import {
   writePack,
   type GitObject,
 } from './gitobj.ts';
-import { hasValidAuth, pathOf, readBody, sendError } from './http.ts';
+import { hasValidAuth, pathOf, queryOf, readBody, sendError } from './http.ts';
 
 const AGENT = 'github-forge/1.0.0';
 const UPLOAD_CAPS_V0 = `side-band-64k shallow thin-pack ofs-delta agent=${AGENT}`;
@@ -284,11 +283,12 @@ function planFetch(repo: Repo, wants: string[], haves: string[], shallowBoundari
       }
     }
   }
-  const sorted = [...objects.values()].sort((a, b) => {
-    const aOid = objectId(a.type, a.data);
-    const bOid = objectId(b.type, b.data);
-    return aOid < bOid ? -1 : aOid > bOid ? 1 : 0;
-  });
+  // Sort by oid. The map is already keyed by oid, so sort the keys directly:
+  // the old code recomputed objectId (a SHA-1) for both sides of every
+  // comparison, an O(n log n) pile of hashes for a key that was already there.
+  const sorted = [...objects.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([, obj]) => obj);
 
   const parentsOf = (oid: string): string[] => {
     const obj = repo.objects.get(oid);
@@ -466,7 +466,7 @@ export async function handleGit(req: IncomingMessage, res: ServerResponse): Prom
 
   try {
     if (method === 'GET' && suffix.startsWith('/info/refs')) {
-      const query = new URL(req.url ?? '/', 'http://entry').searchParams;
+      const query = queryOf(req);
       const service = query.get('service') ?? '';
       if (service === 'git-upload-pack') {
         const v2 = (req.headers['git-protocol'] ?? '') === 'version=2';

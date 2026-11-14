@@ -130,9 +130,14 @@ export function trialNowIso(): string {
   return new Date(trialNowMs()).toISOString();
 }
 
+/** Memoized public-user objects. A scenario user never changes, and the same user object is embedded in nearly every REST/GraphQL response, so rebuilding its ~25 fields (with template strings and a base64 node_id) on every call is pure overhead. The cached object is never mutated — it is only serialized. */
+const publicUserCache = new WeakMap<ScenarioUser, Record<string, unknown>>();
+
 /** The public GitHub-shaped user object for a scenario login. */
 export function publicUser(user: ScenarioUser): Record<string, unknown> {
-  return {
+  const cached = publicUserCache.get(user);
+  if (cached !== undefined) return cached;
+  const built = {
     login: user.login,
     id: user.id,
     node_id: Buffer.from(`U_${user.id}`, 'utf8').toString('base64'),
@@ -155,4 +160,6 @@ export function publicUser(user: ScenarioUser): Record<string, unknown> {
     name: user.name,
     email: user.email,
   };
+  publicUserCache.set(user, built);
+  return built;
 }

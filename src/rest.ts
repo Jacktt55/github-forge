@@ -23,8 +23,26 @@ import {
   sendJson,
 } from './http.ts';
 
+/** The repo's API base URL, cached: owner/name never change, and the string is rebuilt on nearly every response. */
+const repoUrlCache = new WeakMap<Repo, string>();
+
 function repoUrl(repo: Repo): string {
-  return `/api/v3/repos/${repo.owner}/${repo.name}`;
+  const cached = repoUrlCache.get(repo);
+  if (cached !== undefined) return cached;
+  const url = `/api/v3/repos/${repo.owner}/${repo.name}`;
+  repoUrlCache.set(repo, url);
+  return url;
+}
+
+/** An issue's node_id, cached: repo id + issue number are fixed at creation, and the base64 is recomputed on every serialization otherwise. */
+const issueNodeIdCache = new WeakMap<Issue, string>();
+
+function issueNodeId(repo: Repo, issue: Issue): string {
+  const cached = issueNodeIdCache.get(issue);
+  if (cached !== undefined) return cached;
+  const id = Buffer.from(`I_${repo.id}_${issue.number}`, 'utf8').toString('base64');
+  issueNodeIdCache.set(issue, id);
+  return id;
 }
 
 function repoObject(repo: Repo): Record<string, unknown> {
@@ -127,7 +145,7 @@ function issueObject(repo: Repo, issue: Issue): Record<string, unknown> {
   const base = repoUrl(repo);
   return {
     id: issue.id,
-    node_id: Buffer.from(`I_${repo.id}_${issue.number}`, 'utf8').toString('base64'),
+    node_id: issueNodeId(repo, issue),
     url: `${base}/issues/${issue.number}`,
     repository_url: base,
     labels_url: `${base}/issues/${issue.number}/labels{/name}`,
@@ -174,12 +192,23 @@ export function pullMergeable(repo: Repo, pull: Pull): boolean | null {
   return !mergeConflicts(repo, pull.mergeBaseSha, pull.headSha, baseTip);
 }
 
+/** A pull request's node_id, cached like an issue's. */
+const pullNodeIdCache = new WeakMap<Pull, string>();
+
+function pullNodeId(repo: Repo, pull: Pull): string {
+  const cached = pullNodeIdCache.get(pull);
+  if (cached !== undefined) return cached;
+  const id = Buffer.from(`PR_${repo.id}_${pull.number}`, 'utf8').toString('base64');
+  pullNodeIdCache.set(pull, id);
+  return id;
+}
+
 function pullObject(repo: Repo, pull: Pull): Record<string, unknown> {
   const base = repoUrl(repo);
   const mergeable = pullMergeable(repo, pull);
   return {
     id: pull.id,
-    node_id: Buffer.from(`PR_${repo.id}_${pull.number}`, 'utf8').toString('base64'),
+    node_id: pullNodeId(repo, pull),
     html_url: `https://github.com/${repo.owner}/${repo.name}/pull/${pull.number}`,
     diff_url: `https://github.com/${repo.owner}/${repo.name}/pull/${pull.number}.diff`,
     patch_url: `https://github.com/${repo.owner}/${repo.name}/pull/${pull.number}.patch`,

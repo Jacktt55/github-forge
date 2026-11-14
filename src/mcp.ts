@@ -12,7 +12,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { VIEWER, trialNowIso } from './scenario.ts';
 import { store, type Repo } from './store.ts';
-import { hasValidAuth, isRecord, parseJsonBody, readBody } from './http.ts';
+import { hasValidAuth, isRecord, parseJsonBody, pathOf, readBody } from './http.ts';
 import { mergeConflicts } from './rest.ts';
 import { parseCommit } from './gitobj.ts';
 
@@ -325,13 +325,7 @@ async function callTool(name: string, args: Record<string, unknown>): Promise<Re
 
 /** Route the request; returns true when it was an /mcp request. */
 export async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
-  const path = (() => {
-    try {
-      return new URL(req.url ?? '/', 'http://entry').pathname;
-    } catch {
-      return '/';
-    }
-  })();
+  const path = pathOf(req);
   if (path !== '/mcp') return false;
   if ((req.method ?? 'GET') !== 'POST') {
     sendRpc(res, 405, { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Method Not Allowed' } });
