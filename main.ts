@@ -1,3 +1,7 @@
+// github-forge — a standalone GitHub-compatible git forge (make.fun github-core-clone-01).
+// One Node 22 process, stdlib only: git smart HTTP (upload-pack v2, receive-pack v0),
+// REST v3, GraphQL v4 and MCP, served from a deterministic in-memory store. The entrypoint
+// below is the trial lifecycle; the forge itself lives in app.ts and src/.
 // The entry <-> env lifecycle, as env/src/wire.ts settles it: bind an ephemeral port, tell the env the
 // port it bound, then poll until the env says the trial is over and exit 0. Keep this file as it is:
 // the suite scores the server app.ts builds, and the lifecycle is the harness's, not the contest's.
