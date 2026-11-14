@@ -331,7 +331,7 @@ function v2FetchResponse(plan: FetchPlan): Buffer {
     chunks.push(DELIM_PKT);
   }
   chunks.push(pktLine('packfile\n'));
-  chunks.push(...sidebandPackets(writePack(plan.objects), 1));
+  chunks.push(sidebandPackets(writePack(plan.objects), 1));
   chunks.push(FLUSH_PKT);
   return Buffer.concat(chunks);
 }
@@ -340,7 +340,7 @@ function v0FetchResponse(plan: FetchPlan): Buffer {
   const chunks: Buffer[] = [pktLine('NAK\n')];
   for (const oid of plan.shallow) chunks.push(pktLine(`shallow ${oid}\n`));
   for (const oid of plan.unshallow) chunks.push(pktLine(`unshallow ${oid}\n`));
-  chunks.push(...sidebandPackets(writePack(plan.objects), 1));
+  chunks.push(sidebandPackets(writePack(plan.objects), 1));
   chunks.push(FLUSH_PKT);
   return Buffer.concat(chunks);
 }
@@ -437,7 +437,7 @@ function pushReportResponse(results: { ref: string; ok: boolean; reason: string 
   }
   lines.push(FLUSH_PKT);
   const report = Buffer.concat(lines);
-  return Buffer.concat([...sidebandPackets(report, 1), FLUSH_PKT]);
+  return Buffer.concat([sidebandPackets(report, 1), FLUSH_PKT]);
 }
 
 /** Route the request; returns true when it was a /.git request. */

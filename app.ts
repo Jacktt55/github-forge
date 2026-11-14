@@ -19,7 +19,7 @@ import { pathOf, sendError, sendJson } from './src/http.ts';
 
 /** Build the server. It binds nothing until the caller listens; the entry listens on an ephemeral port. */
 export function createApp(): Server {
-  return createServer((req: IncomingMessage, res: ServerResponse) => {
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     void (async () => {
       try {
         const path = pathOf(req);
@@ -44,4 +44,14 @@ export function createApp(): Server {
       }
     })();
   });
+  // Disable Nagle's algorithm on every accepted socket: the bench is thousands
+  // of small request/response pairs (2,000 sequential GETs, 200 pushes), and a
+  // delayed-ACK / Nagle interaction adds a fixed latency to each round-trip.
+  // This is transport tuning only; it cannot change any response bytes.
+  // Disable Nagle's algorithm on every accepted socket: the bench is thousands
+  // of small request/response pairs (2,000 sequential GETs, 200 pushes), and a
+  // delayed-ACK / Nagle interaction adds a fixed latency to each round-trip.
+  // This is transport tuning only; it cannot change any response bytes.
+  server.on('connection', (sock) => sock.setNoDelay(true));
+  return server;
 }

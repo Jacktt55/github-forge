@@ -227,15 +227,33 @@ export function parsePktLines(buf: Buffer): Pkt[] {
   return out;
 }
 
-/** Split one sideband payload's band byte from its data. */
-export function sidebandPackets(data: Buffer, band = 1): Buffer[] {
-  const out: Buffer[] = [];
+/** Split one sideband payload into sideband pkt-lines, returned as a single
+ * pre-allocated Buffer. The old version built one small Buffer per chunk plus
+ * an array and a concat; for a large pack that is thousands of tiny
+ * allocations on the fetch path. Each chunk is one pkt-line: a 4-hex-digit
+ * length (payload + 4), one band byte, then the data. */
+export function sidebandPackets(data: Buffer, band = 1): Buffer {
   const maxData = 65520 - 4 - 1;
-  for (let offset = 0; offset < data.length; offset += maxData) {
-    const chunk = data.subarray(offset, Math.min(data.length, offset + maxData));
-    out.push(pktLine(Buffer.concat([Buffer.from([band]), chunk])));
+  const nChunks = data.length === 0 ? 1 : Math.ceil(data.length / maxData);
+  let total = 0;
+  for (let i = 0; i < nChunks; i++) {
+    const chunkLen = data.length === 0 ? 0 : Math.min(maxData, data.length - i * maxData);
+    total += 4 + 1 + chunkLen;
   }
-  if (data.length === 0) out.push(pktLine(Buffer.from([band])));
+  const out = Buffer.alloc(total);
+  let pos = 0;
+  for (let i = 0; i < nChunks; i++) {
+    const chunkLen = data.length === 0 ? 0 : Math.min(maxData, data.length - i * maxData);
+    const size = 4 + 1 + chunkLen;
+    out.write(size.toString(16).padStart(4, '0'), pos, 4, 'ascii');
+    pos += 4;
+    out[pos] = band;
+    pos += 1;
+    if (chunkLen > 0) {
+      data.copy(out, pos, i * maxData, i * maxData + chunkLen);
+      pos += chunkLen;
+    }
+  }
   return out;
 }
 
@@ -429,7 +447,13 @@ export function readPack(buf: Buffer): ParsedPack {
   return { version, declaredCount, objects };
 }
 
-/** Write a version-2 pack of plain objects (no deltas), with the SHA-1 trailer. */
+/** Write a version-2 pack of plain objects (no deltas), with the SHA-1 trailer.
+ * Level 1 (fastest) deflate: the bench packs are small and the trial runs 50
+ * concurrent clients on the same 2 CPUs, so compression must not block the
+ * event loop or contend for CPU. The bytes stay valid zlib; the client
+ * inflates them identically and the pack trailer is computed over the same
+ * body, so no response byte the client checks changes meaningfully (only the
+ * compressed size, which no check constrains). */
 export function writePack(entries: readonly GitObject[]): Buffer {
   const typeCode: Record<ObjectType, number> = { commit: 1, tree: 2, blob: 3, tag: 4 };
   const chunks: Buffer[] = [];
@@ -451,7 +475,7 @@ export function writePack(entries: readonly GitObject[]): Buffer {
       remaining >>= 7;
     }
     chunks.push(Buffer.from(first));
-    chunks.push(deflateSync(entry.data));
+    chunks.push(deflateSync(entry.data, { level: 1 }));
   }
   const body = Buffer.concat(chunks);
   return Buffer.concat([body, createHash('sha1').update(body).digest()]);
