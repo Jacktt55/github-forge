@@ -32,6 +32,28 @@ export function sendJson(
   res.end(text);
 }
 
+/**
+ * Send a pre-serialized JSON body (already ending in '\n') with its byte
+ * length already computed. The x-github-request-id is still fresh per
+ * request, so only the body bytes are reused. Use only for responses whose
+ * bytes are fully determined by a versioned cache key.
+ */
+export function sendCachedJson(
+  res: ServerResponse,
+  status: number,
+  text: string,
+  byteLength: number,
+  headers: Readonly<Record<string, string>> = {},
+): void {
+  res.writeHead(status, {
+    'content-type': JSON_TYPE,
+    'content-length': byteLength,
+    'x-github-request-id': nextRequestId(),
+    ...headers,
+  });
+  res.end(text);
+}
+
 export function sendError(res: ServerResponse, status: number, message: string): void {
   sendJson(res, status, { message });
 }

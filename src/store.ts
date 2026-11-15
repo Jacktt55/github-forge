@@ -47,6 +47,12 @@ export interface Issue {
   updatedAt: string;
   closedAt: string | null;
   user: string;
+  /** Monotonic generation bumped on every mutation that changes the issue's
+   * serialized response (PATCH, comment add, label change). The REST layer
+   * caches the serialized GET /issues/{n} body keyed on this version; a bump
+   * invalidates the cached bytes. Labels are immutable once created and the
+   * repo owner/name never change, so no other mutation can alter the response. */
+  version: number;
 }
 
 export interface Pull {
@@ -375,6 +381,7 @@ export class Store {
       updatedAt: now,
       closedAt: null,
       user: VIEWER.login,
+      version: 0,
     };
     repo.issues.push(issue);
     return issue;

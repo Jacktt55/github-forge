@@ -964,6 +964,8 @@ function executeMutation(field: FieldNode, ctx: ExecCtx): unknown {
       if (issue === undefined) return null;
       issue.state = 'closed';
       issue.closedAt = trialNowIso();
+      // The issue's serialized REST response changed: invalidate its cache.
+      issue.version += 1;
       const payload: Value = { __type: 'payload', kind: 'CloseIssuePayload', repo, issue };
       return executeSelection(selection, 'CloseIssuePayload', payload, ctx);
     }
@@ -1033,6 +1035,8 @@ function executeMutation(field: FieldNode, ctx: ExecCtx): unknown {
       const commentId = store.nextCommentId(repo);
       const comment = { id: commentId, body, user: VIEWER.login, createdAt: trialNowIso(), updatedAt: trialNowIso() };
       target.comments.push(comment);
+      // A comment on an issue changes its REST response (comments count).
+      if (decoded.kind === 'I') (target as Issue).version += 1;
       const globalId = encodeGlobalId(`C_${repo.id}_${number}_${commentId}`);
       const payload: Value = {
         __type: 'payload',

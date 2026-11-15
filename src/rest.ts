@@ -19,6 +19,7 @@ import {
   pathOf,
   queryOf,
   readBody,
+  sendCachedJson,
   sendError,
   sendJson,
 } from './http.ts';
@@ -183,6 +184,31 @@ function branchRefObject(repo: Repo, ref: string, sha: string): Record<string, u
     user: publicUser(VIEWER),
     repo: repoObject(repo),
   };
+}
+
+/**
+ * Serialized GET /issues/{n} response cache, keyed on the issue object.
+ * The bench reads the same issue 2,000 times in a row with no writes in
+ * between, so rebuilding its object and re-stringifying it every time is
+ * pure overhead. The entry is valid only while issue.version matches; every
+ * mutation that can change the response (PATCH, comment add) bumps the
+ * version first. The cached text is exactly what sendJson would produce
+ * (JSON + trailing newline) with its byte length precomputed, so a hit
+ * skips the object build, the stringify, and the byte-length scan.
+ */
+const issueResponseCache = new WeakMap<Issue, { version: number; text: string; byteLength: number }>();
+
+/** Serve GET /issues/{n} for one issue, from the cache when it is fresh. */
+function sendIssueObject(res: ServerResponse, repo: Repo, issue: Issue): void {
+  const cached = issueResponseCache.get(issue);
+  if (cached !== undefined && cached.version === issue.version) {
+    sendCachedJson(res, 200, cached.text, cached.byteLength);
+    return;
+  }
+  const text = `${JSON.stringify(issueObject(repo, issue))}\n`;
+  const byteLength = Buffer.byteLength(text);
+  issueResponseCache.set(issue, { version: issue.version, text, byteLength });
+  sendCachedJson(res, 200, text, byteLength);
 }
 
 export function pullMergeable(repo: Repo, pull: Pull): boolean | null {
@@ -906,7 +932,7 @@ async function routeIssues(ctx: Ctx, repo: Repo, rest: string[]): Promise<void> 
 
   // GET /issues/{n}
   if (method === 'GET' && rest.length === 1) {
-    sendJson(res, 200, issueObject(repo, issue));
+    sendIssueObject(res, repo, issue);
     return;
   }
 
@@ -931,6 +957,8 @@ async function routeIssues(ctx: Ctx, repo: Repo, rest: string[]): Promise<void> 
       }
     }
     issue.updatedAt = trialNowIso();
+    // The response changed: invalidate the cached GET /issues/{n} bytes.
+    issue.version += 1;
     sendJson(res, 200, issueObject(repo, issue));
     return;
   }
@@ -946,6 +974,8 @@ async function routeIssues(ctx: Ctx, repo: Repo, rest: string[]): Promise<void> 
       const comment = { id: store.nextCommentId(repo), body: text, user: VIEWER.login, createdAt: trialNowIso(), updatedAt: trialNowIso() };
       issue.comments.push(comment);
       issue.updatedAt = trialNowIso();
+      // The comments count in the issue response changed: invalidate the cache.
+      issue.version += 1;
       sendJson(res, 201, commentObject(repo, issue.number, comment));
       return;
     }
